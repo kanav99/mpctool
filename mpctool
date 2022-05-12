@@ -1,0 +1,85 @@
+#!/usr/bin/env python3
+import argparse
+from functools import wraps
+import json
+from pathlib import Path
+import os
+import subprocess
+
+def list_command(conf, args):
+    print("Number of parties =", len(conf['parties']))
+    for i, party in enumerate(conf['parties']):
+        print("Party", i, "=", party, "(", conf['parties'][party]['user'] + "@" + conf['parties'][party]['host'], ")")
+
+def init_command():
+    if os.path.exists(str(Path.home()) + "/.mpc/config.json"):
+        print("already initialized")
+        return
+    print("initializing mpctool")
+    os.mkdir(str(Path.home()) + "/.mpc/")
+    with open(str(Path.home()) + "/.mpc/config.json", "w") as f:
+        json.dump({ "parties": [] }, f)
+    print("Edit " + str(Path.home()) + "/.mpc/config.json" + " to add parties")
+
+def copy_command(conf, args):
+    if args.all:
+        for i, party in enumerate(conf['parties']):
+            os.system("scp " + args.src + " " + conf['parties'][party]['user'] + "@" + conf['parties'][party]['host'] + ":" + args.dest)
+    elif args.party != None:
+        os.system("scp " + args.src + " " + conf['parties'][args.party]['user'] + "@" + conf['parties'][args.party]['host'] + ":" + args.dest)
+
+def exec_command(conf, args):
+    command = str(args.comm)
+    if args.all:
+        process_list = {}
+        for i, party in enumerate(conf['parties']):
+            if args.output_party == party:
+                p = subprocess.Popen("ssh " + conf['parties'][party]['user'] + "@" + conf['parties'][party]['host'] + " \"" + command.replace("%p", str(i)) + "\"",  shell=True)
+            else:
+                p = subprocess.Popen("ssh " + conf['parties'][party]['user'] + "@" + conf['parties'][party]['host'] + " \"" + command.replace("%p", str(i)) + "\"",  shell=True, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
+            process_list[party] = p
+
+        for i, p in enumerate(process_list):
+            process_list[p].wait()
+            if process_list[p].returncode != 0:
+                print("party " + p + " failed")
+
+    elif args.party != None:
+        os.system("ssh " + conf['parties'][args.party]['user'] + "@" + conf['parties'][args.party]['host'] + " \"" + command.replace("%p", str(i)) + "\"")
+
+def main():
+    parser = argparse.ArgumentParser(description='mpctool')
+    parser.add_argument('-c', '--config', type=str, help='file to read', default=str(Path.home()) + "/.mpc/config.json")
+    
+    subparser = parser.add_subparsers(dest='command')
+    subparser.required = True
+    
+    init_parser = subparser.add_parser('init', help='initialize mpctool')
+    init_parser.set_defaults(func = init_command)
+
+    list_parser = subparser.add_parser('list', help='list all parties')
+    list_parser.set_defaults(func = list_command)
+
+    copy_parser = subparser.add_parser('copy', help='copy a file to parties')
+    copy_parser.add_argument('src', type=str, help='file to copy')
+    copy_parser.add_argument('dest', type=str, help='destination file')
+    copy_parser.add_argument('-a', '--all', action='store_true', help="copy on all parties")
+    copy_parser.add_argument('-p', '--party', type=str, help='copy to party')
+    copy_parser.set_defaults(func = copy_command)
+    
+    exec_parser = subparser.add_parser('exec', help='execute a command')
+    exec_parser.add_argument('-a', '--all', action='store_true', help="execute on all parties")
+    exec_parser.add_argument('-p', '--party', type=str, help='execute on a party')
+    exec_parser.add_argument('comm', type=str, help='shell command to execute')
+    exec_parser.add_argument("-o", "--output-party", type=str, help="set which party should print (only to be used with --all)")
+
+    exec_parser.set_defaults(func = exec_command)
+
+    args = parser.parse_args()
+    if args.command == "init":
+        args.func()
+    else:
+        with open(args.config) as f:
+            args.func(json.load(f), args)
+
+main()
