@@ -22,30 +22,41 @@ def init_command():
     print("Edit " + str(Path.home()) + "/.mpc/config.json" + " to add parties")
 
 def copy_command(conf, args):
+    host = None
+    if ":" in args.src:
+        host = args.src.split(":")[0]
+        src = args.src.split(":")[1]
+        src_addr = conf["parties"][host]["user"] + "@" + conf["parties"][host]["host"] + ":" + src
+        os.system("scp " + src_addr + " ~/.mpc/tmpfile")
+        src_addr = "~/.mpc/tmpfile"
+    else:
+        src_addr = args.src
     if args.all:
         for i, party in enumerate(conf['parties']):
-            os.system("scp " + args.src + " " + conf['parties'][party]['user'] + "@" + conf['parties'][party]['host'] + ":" + args.dest)
+            if party != host:
+                os.system("scp " + src_addr + " " + conf['parties'][party]['user'] + "@" + conf['parties'][party]['host'] + ":" + args.dest)
     elif args.party != None:
-        os.system("scp " + args.src + " " + conf['parties'][args.party]['user'] + "@" + conf['parties'][args.party]['host'] + ":" + args.dest)
+        os.system("scp " + src_addr + " " + conf['parties'][args.party]['user'] + "@" + conf['parties'][args.party]['host'] + ":" + args.dest)
 
 def exec_command(conf, args):
     command = str(args.comm)
-    if args.all:
-        process_list = {}
-        for i, party in enumerate(conf['parties']):
-            if args.output_party == party:
-                p = subprocess.Popen("ssh " + conf['parties'][party]['user'] + "@" + conf['parties'][party]['host'] + " \"" + command.replace("%p", str(i)) + "\"",  shell=True)
-            else:
-                p = subprocess.Popen("ssh " + conf['parties'][party]['user'] + "@" + conf['parties'][party]['host'] + " \"" + command.replace("%p", str(i)) + "\"",  shell=True, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
-            process_list[party] = p
+    for _ in range(args.trials):
+        if args.all:
+            process_list = {}
+            for i, party in enumerate(conf['parties']):
+                if party != args.exclude:
+                    # print("running command \"" + command.replace("%p", str(conf['parties'][party]['index'])) + "\" on", party)
+                    if args.output_party == party:
+                        p = subprocess.Popen("ssh " + conf['parties'][party]['user'] + "@" + conf['parties'][party]['host'] + " \"" + command.replace("%p", str(conf['parties'][party]['index'])) + "\"",  shell=True)
+                    else:
+                        p = subprocess.Popen("ssh " + conf['parties'][party]['user'] + "@" + conf['parties'][party]['host'] + " \"" + command.replace("%p", str(conf['parties'][party]['index'])) + "\"",  shell=True, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
+                    process_list[party] = p
 
-        for i, p in enumerate(process_list):
-            process_list[p].wait()
-            if process_list[p].returncode != 0:
-                print("party " + p + " failed")
+            for i, p in enumerate(process_list):
+                process_list[p].wait()
 
-    elif args.party != None:
-        os.system("ssh " + conf['parties'][args.party]['user'] + "@" + conf['parties'][args.party]['host'] + " \"" + command.replace("%p", str(i)) + "\"")
+        elif args.party != None:
+            os.system("ssh " + conf['parties'][args.party]['user'] + "@" + conf['parties'][args.party]['host'] + " \"" + command.replace("%p", str(conf["parties"][args.party]["index"])) + "\"")
 
 def main():
     parser = argparse.ArgumentParser(description='mpctool')
@@ -69,6 +80,8 @@ def main():
     
     exec_parser = subparser.add_parser('exec', help='execute a command')
     exec_parser.add_argument('-a', '--all', action='store_true', help="execute on all parties")
+    exec_parser.add_argument('-e', '--exclude', type=str, help='exclude party')
+    exec_parser.add_argument('-t', '--trials', type=int, help='number of trials', default=1)
     exec_parser.add_argument('-p', '--party', type=str, help='execute on a party')
     exec_parser.add_argument('comm', type=str, help='shell command to execute')
     exec_parser.add_argument("-o", "--output-party", type=str, help="set which party should print (only to be used with --all)")
